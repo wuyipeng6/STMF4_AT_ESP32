@@ -2,12 +2,13 @@
 #include "delay.h"
 #include "usart2_dma_at.h"
 #include "jsondata.h"
+
 //初始化ESP-AT模块所使用的串口USART2
 void esp_at_usart_init(void)//static函数等于文件的私有函数
 {
     USART2_DMA_Config();//初始化USART2+DMA接收
 }
-void power_on_location_get(void)
+void power_on_step1_location_get(void)
 {
     // 1. 检查ESP-AT模块
     if (!esp_at_check_module()) {
@@ -30,6 +31,14 @@ void power_on_location_get(void)
     
     // 5. 发送HTTP GET请求获取公网IP和地理位置信息
     if (esp_at_http_get_IP()) {
+        delay_ms(500);
+    }
+}
+
+void power_on_step2_weather_get(void)
+{
+    // 发送HTTP GET请求获取天气信息
+    if (esp_at_http_get_weather()) {
         delay_ms(500);
     }
 }
@@ -125,6 +134,71 @@ bool esp_at_http_get_IP(void) {
     
     if (!Parse_IP_JSON_To_Global((char*)MAIN_RX_BUF)) {
         printf("[ERROR] IP的JSON数据解析失败\r\n");
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief 发送HTTP GET请求查询天气数据，同时把数据解析存入结构体
+ * @return true: 成功; false: 失败
+ * @note 依赖 g_ip_info.city 作为城市名参数
+ */
+bool esp_at_http_get_weather(void) {
+    if (!g_ip_info.is_valid || g_ip_info.city[0] == '\0') {
+        printf("[ERROR] 城市信息无效，无法请求天气\r\n");
+        return false;
+    }
+
+    // URL编码城市名称
+    char city_encoded[96];  // 预留足够空间，URL编码后长度会增加
+    str_to_urlencode(city_encoded, g_ip_info.city);
+
+    char url[256];
+    snprintf(url, sizeof(url),
+             "\"http://apis.juhe.cn/simpleWeather/query?city=%s&key=%s\"",
+             city_encoded, JUHE_WEATHER_KEY);
+
+    char cmd[320];
+    uint16_t timeout = 15000;
+    snprintf(cmd, sizeof(cmd), "AT+HTTPCLIENT=2,1,%s,,,1", url);
+
+    if (!send_at_command(cmd, "OK", timeout)) {
+        printf("[ERROR] 天气HTTP GET请求失败\r\n");
+        return false;
+    }
+    // 解析天气JSON数据并存入全局变量
+    if (!Parse_Weather_JSON_To_Global((char*)MAIN_RX_BUF)) {
+        printf("[ERROR] 天气JSON数据解析失败\r\n");
+        return false;
+    }
+
+    // 响应已保存在 MAIN_RX_BUF，按需自行解析或打印
+    return true;
+}
+
+/**
+ * @brief 配置SNTP并获取网络时间，解析到 g_sys_time 前提也是必须联网
+ * @return true: 成功; false: 失败
+ */
+bool esp_at_get_sntp_time(void) {
+    // 1. 配置SNTP: 使能，时区8，中国常用NTP服务器
+    if (!send_at_command("AT+CIPSNTPCFG=1,8,\"cn.ntp.org.cn\",\"ntp.sjtu.edu.cn\"", "+TIME_UPDATED", 5000)) {
+        printf("[ERROR] SNTP配置失败\r\n");
+        return false;
+    }
+
+    delay_ms(200);
+
+    // 2. 查询时间
+    if (!send_at_command("AT+CIPSNTPTIME?", "OK", 5000)) {
+        printf("[ERROR] SNTP时间查询失败\r\n");
+        return false;
+    }
+
+    // 3. 解析 +CIPSNTPTIME 中的时分秒
+    if (!Parse_SNTP_TIME_To_Global((char*)MAIN_RX_BUF)) {
+        printf("[ERROR] SNTP时间解析失败\r\n");
         return false;
     }
     return true;
@@ -249,5 +323,18 @@ void esp_at_print_response(void) {
     printf("\r\n========== HTTP 响应数据 ==========\r\n");
     printf("%s\r\n", (char*)MAIN_RX_BUF);
     printf("==================================\r\n\r\n");
+}
+
+// ESP32 AT 模块功能演示
+void esp32_at_demo(void)
+{
+    esp_at_usart_init();//初始化ESP-AT模块所使用的串口USART2
+    power_on_step1_location_get();//上电联网并获取IP及地理位置，初始化结构体IP_Location_t
+    Print_IP_Info();  //打印IP及地理位置信息
+    power_on_step2_weather_get();//获取天气信息，初始化结构体Weather_Forecast_t，
+    Print_Weather_Forecast();//打印天气预报信息
+    esp_at_get_sntp_time();//获取SNTP时间，初始化结构体System_Time_t
+    Print_SNTP_Time();//打印SNTP时间信息
+
 }
 

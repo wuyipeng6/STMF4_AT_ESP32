@@ -18,6 +18,7 @@ virtualFolder:
         - path: ../driver/esp_at.c
         - path: ../driver/delay.c
         - path: ../driver/usart2_dma_at.c
+        - path: ../driver/jsondata.c
       folders: []
     - name: hardware
       files: []

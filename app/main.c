@@ -3,38 +3,18 @@
 #include "usart.h"
 #include "esp_at.h"
 #include <stdbool.h>
-
+#include "jsondata.h"
 int main()
 {
-    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2); // ÉèÖÃÖĞ¶ÏÓÅÏÈ¼¶·Ö×é
-    cpu_tick_init();  // ³õÊ¼»¯ÏµÍ³µÎ´ğ¶¨Ê±Æ÷
-    delay_ms(100);    // µÈ´ıÏµÍ³ÎÈ¶¨
-    uart_init(115200);	//´®¿Ú³õÊ¼»¯²¨ÌØÂÊÎª115200
-    esp_at_usart_init();//³õÊ¼»¯ESP-ATÄ£¿éËùÊ¹ÓÃµÄ´®¿ÚUSART2
-    if(send_at_command("AT", "OK", 1000) == true)
-    {
-        printf("ESP-AT³É¹¦\r\n");
-    }
-    else
-    {
-        printf("ESP-ATÊ§°Ü\r\n");
-    }
-
-    //delay_ms(500);
-
-    if (send_at_command("AT+CWMODE=1", "OK", 1000) == true) {
-        printf("Ä£Ê½ÉèÖÃ³É¹¦\r\n");
-    } else {
-        printf("Ä£Ê½ÉèÖÃ³¬Ê±»òÊ§°Ü\r\n");
-    }
-    //delay_ms(500);
-    // Á¬½Ó WiFi µÄÖ¸ÁîÍ¨³£ĞèÒªºÜ³¤Ê±¼ä (5~10Ãë)
-    if (send_at_command("AT+CWJAP=\"whatcanisay\",\"123456qq\"", "OK", 10000) == true) {
-        printf("WiFi ÒÑÁ¬½Ó\r\n");
-    }
-    else {
-        printf("WiFi Á¬½Ó³¬Ê±»òÊ§°Ü\r\n");
-    }
+    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2); // è®¾ç½®ä¸­æ–­ä¼˜å…ˆçº§åˆ†ç»„
+    cpu_tick_init();  // åˆå§‹åŒ–ç³»ç»Ÿæ»´ç­”å®šæ—¶å™¨
+    delay_ms(100);    // ç­‰å¾…ç³»ç»Ÿç¨³å®š
+    uart_init(115200);	//ä¸²å£åˆå§‹åŒ–æ³¢ç‰¹ç‡ä¸º115200
+    esp_at_usart_init();//åˆå§‹åŒ–ESP-ATæ¨¡å—æ‰€ä½¿ç”¨çš„ä¸²å£USART2
+    
+    power_on_location_get();//ä¸Šç”µè·å–IPåŠåœ°ç†ä½ç½®ï¼Œåˆå§‹åŒ–ç»“æ„ä½“IP_Location_t
+    
+    Print_IP_Info();
     while(1)
     {
         delay_ms(100);

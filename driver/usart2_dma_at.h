@@ -2,7 +2,7 @@
 #define USART2_DMA_AT_H
 #include "stm32f4xx.h"
 
-#define UART_RX_BUF_SIZE 512
+#define UART_RX_BUF_SIZE 2048
 
 extern uint8_t UART_RX_BUF[UART_RX_BUF_SIZE]; // DMA 接收原始缓冲区
 extern uint8_t MAIN_RX_BUF[UART_RX_BUF_SIZE]; // 解析用的转存缓冲区

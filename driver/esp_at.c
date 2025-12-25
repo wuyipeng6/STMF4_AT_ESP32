@@ -1,11 +1,39 @@
 #include "esp_at.h"
 #include "delay.h"
 #include "usart2_dma_at.h"
+#include "jsondata.h"
 //初始化ESP-AT模块所使用的串口USART2
 void esp_at_usart_init(void)//static函数等于文件的私有函数
 {
     USART2_DMA_Config();//初始化USART2+DMA接收
 }
+void power_on_location_get(void)
+{
+    // 1. 检查ESP-AT模块
+    if (!esp_at_check_module()) {
+        while(1) delay_ms(100);
+    }
+    // 2. 设置WiFi工作模式为Station (STA)
+    esp_at_set_mode(1);
+    delay_ms(100);
+    // 3. 连接到WiFi网络
+    if (!esp_at_connect_wifi("whatcanisay", "123456qq")) {
+        while(1) delay_ms(100);
+    }
+    // 延迟一段时间确保WiFi连接稳定
+    delay_ms(1000);
+    // // 4. 获取本地IP地址  未来可以将结构体IP_Location_t的内容放入后背区，掉电不丢失，
+    //每次上电，先读取本地IP，与结构体比较IP，如果相同，则不进行HTTP请求，节省时间和流量。
+    // char local_ip[20] = {0};
+    // esp_at_get_local_ip(local_ip, sizeof(local_ip));
+    // delay_ms(1000);
+    
+    // 5. 发送HTTP GET请求获取公网IP和地理位置信息
+    if (esp_at_http_get_IP()) {
+        delay_ms(500);
+    }
+}
+
 
 //清空ESP-AT模块接收缓冲区
 void esp_at_clear_buffer(void) {
@@ -13,7 +41,6 @@ void esp_at_clear_buffer(void) {
     rx_len = 0;
     memset(MAIN_RX_BUF, 0, UART_RX_BUF_SIZE);
 }
-
 
 
 /**
@@ -57,8 +84,6 @@ bool esp_at_wait_response(const char* expected, uint16_t timeout_ms) {
     return false; // 到时间了还没匹配到
 }
 
-
-
 bool send_at_command(char* cmd, char* expected_res, uint32_t timeout) {
     // 1. 发送前先清理现场
     esp_at_clear_buffer();
@@ -77,5 +102,152 @@ bool send_at_command(char* cmd, char* expected_res, uint32_t timeout) {
     
     // 3. 调用等待函数
     return esp_at_wait_response(expected_res, timeout);
+}
+
+/**
+ * @brief 发送HTTP GET请求IP地址查询 并
+ * @return true: 成功; false: 失败
+ * @note:获取IP地址，返回的数据是连续的，不需要分缓冲区存储。
+ */
+bool esp_at_http_get_IP(void) {
+    char cmd[256];
+    
+    // 使用AT+HTTPCLIENT命令发送HTTP GET请求
+    char host[] = "\"http://ip-api.com/json/?lang=zh-CN\"";
+    uint16_t timeout = 15000;
+
+    sprintf(cmd, "AT+HTTPCLIENT=2,1,%s,,,1",host);
+    
+    if (!send_at_command(cmd, "OK", timeout)) {
+        printf("[ERROR] HTTP GET请求失败\r\n");
+        return false;
+    }
+    
+    if (!Parse_IP_JSON_To_Global((char*)MAIN_RX_BUF)) {
+        printf("[ERROR] IP的JSON数据解析失败\r\n");
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief 检查ESP-AT模块是否正常工作 (带重试机制)
+ * @return true: 模块正常; false: 模块异常
+ * @note: 如果第一次收不到OK，会重新发送，总共尝试3次
+ */
+bool esp_at_check_module(void) {
+    uint8_t retry_count = 3;
+    
+    for (uint8_t i = 0; i < retry_count; i++) {
+        if (send_at_command("AT", "OK", 1000)) {
+            return true;  // 成功，直接返回
+        }
+        // 第一次和第二次失败时，等待后重试
+        if (i < retry_count - 1) {
+            printf("[WARNING] ESP-AT模块第%d次检查失败,准备重试...\r\n", i + 1);
+            delay_ms(500);  // 等待500ms后重试
+        }
+    }
+    
+    printf("[ERROR] ESP-AT模块在3次尝试后仍无响应\r\n");
+    return false;
+}
+
+/**
+ * @brief 设置WiFi工作模式
+ * @param mode: 1=Station模式(STA), 2=AP模式, 3=Station+AP模式
+ * @return true: 设置成功; false: 设置失败
+ */
+bool esp_at_set_mode(uint8_t mode) {
+    char cmd[32];
+    sprintf(cmd, "AT+CWMODE=%d", mode);
+    if (!send_at_command(cmd, "OK", 1000)) {
+        printf("[ERROR] WiFi模式设置失败 (mode=%d)\r\n", mode);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief 连接WiFi网络
+ * @param ssid: WiFi网络名称 (SSID)
+ * @param password: WiFi密码
+ * @return true: 连接成功; false: 连接失败
+ */
+bool esp_at_connect_wifi(const char* ssid, const char* password) {
+    char cmd[128];
+    // AT+CWJAP="SSID","password"
+    sprintf(cmd, "AT+CWJAP=\"%s\",\"%s\"", ssid, password);
+    if (!send_at_command(cmd, "OK", 10000)) {
+        printf("[ERROR] WiFi连接失败 (SSID=%s)\r\n", ssid);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief 断开WiFi连接
+ * @return true: 断开成功; false: 断开失败
+ */
+bool esp_at_disconnect_wifi(void) {
+    if (!send_at_command("AT+CWQAP", "OK", 2000)) {
+        printf("[ERROR] WiFi断开连接失败\r\n");
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief 获取本地IP地址 (使用AT+CIPSTA命令)
+ * @param ip_str: 用于存储IP地址的缓冲区
+ * @param len: 缓冲区长度
+ * @return true: 获取成功; false: 获取失败
+ * @note: IP地址格式为 "192.168.x.x"
+ */
+bool esp_at_get_local_ip(char* ip_str, uint16_t len) {
+    if (!send_at_command("AT+CIPSTA?", "OK", 2000)) {
+        printf("[ERROR] AT+CIPSTA?命令发送失败\r\n");
+        return false;
+    }
+    
+    // 从缓冲区中提取IP地址
+    // 响应格式: +CIPSTA:ip:"192.168.x.x"
+    char* ip_start = strstr((char*)MAIN_RX_BUF, "ip:\"");
+    if (ip_start == NULL) {
+        printf("[ERROR] 未找到IP地址信息\r\n");
+        return false;
+    }
+    
+    // 移动指针到IP地址开始位置
+    ip_start += 4;  // 跳过 "ip:\""
+    
+    // 查找结束引号
+    char* ip_end = strchr(ip_start, '"');
+    if (ip_end == NULL) {
+        printf("[ERROR] IP地址格式错误\r\n");
+        return false;
+    }
+    
+    // 计算IP地址长度
+    uint16_t ip_len = ip_end - ip_start;
+    if (ip_len >= len) {
+        printf("[ERROR] 缓冲区太小\r\n");
+        return false;
+    }
+    
+    // 拷贝IP地址到缓冲区
+    strncpy(ip_str, ip_start, ip_len);
+    ip_str[ip_len] = '\0';
+    
+    return true;
+}
+
+/**
+ * @brief 打印接收到的HTTP响应数据
+ */
+void esp_at_print_response(void) {
+    printf("\r\n========== HTTP 响应数据 ==========\r\n");
+    printf("%s\r\n", (char*)MAIN_RX_BUF);
+    printf("==================================\r\n\r\n");
 }
 
